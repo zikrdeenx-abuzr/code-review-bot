@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Code Review Bot</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; font-family: system-ui, sans-serif; background: #0f172a; color: #e2e8f0; }
+  main { max-width: 640px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 22px; margin: 8px 0 4px; }
+  p.sub { color: #94a3b8; margin: 0 0 16px; font-size: 14px; }
+  select, textarea, button { width: 100%; box-sizing: border-box; border-radius: 10px; border: 1px solid #334155; background: #1e293b; color: #e2e8f0; padding: 12px; font-size: 16px; margin-bottom: 10px; }
+  textarea { height: 220px; font-family: ui-monospace, monospace; font-size: 13px; }
+  button { background: #2563eb; border: 0; font-weight: 600; }
+  button.alt { background: #334155; }
+  #score { font-size: 40px; font-weight: 700; margin: 12px 0 4px; }
+  .item { background: #1e293b; border-left: 4px solid #f59e0b; border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; font-size: 14px; }
+  .item.secret { border-color: #ef4444; }
+  .item small { color: #94a3b8; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Code Review Bot</h1>
+  <p class="sub">Paste code to see what the bot would comment on a pull request.</p>
+  <select id="lang">
+    <option value="sample.py">Python</option>
+    <option value="sample.js">JavaScript</option>
+    <option value="Sample.java">Java</option>
+    <option value="sample.c">C / C++</option>
+  </select>
+  <textarea id="code" placeholder="Paste code here"></textarea>
+  <button id="run">Review code</button>
+  <button class="alt" id="demo">Load a bad Python sample</button>
+  <div id="out"></div>
+</main>
+<script>
+var SAMPLE = [
+  'import requests, json',
+  'API_PASSWORD = "hunter2024"',
+  '',
+  'def get_user(url):',
+  '    r = requests.get(url)',
+  '    return json.loads(r.text)',
+  '',
+  'def save(x):',
+  '    try:',
+  '        open("a.txt").write(x)',
+  '    except:',
+  '        pass'
+].join('\n');
+
+document.getElementById('demo').onclick = function () {
+  document.getElementById('lang').value = 'sample.py';
+  document.getElementById('code').value = SAMPLE;
+};
+
+document.getElementById('run').onclick = function () {
+  var out = document.getElementById('out');
+  out.textContent = 'Reviewing...';
+  fetch('/analyze', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ filename: document.getElementById('lang').value, content: document.getElementById('code').value })
+  }).then(function (r) { return r.json(); }).then(function (d) {
+    out.textContent = '';
+    var s = document.createElement('div');
+    s.id = 'score';
+    s.textContent = d.score + '/100';
+    out.appendChild(s);
+    if (!d.findings.length) {
+      var ok = document.createElement('p');
+      ok.textContent = 'No issues found. The bot would stay quiet.';
+      out.appendChild(ok);
+      return;
+    }
+    d.findings.forEach(function (f) {
+      var el = document.createElement('div');
+      el.className = 'item ' + f.rule;
+      var small = document.createElement('small');
+      small.textContent = 'Line ' + f.line + ' - ' + f.rule;
+      el.appendChild(small);
+      el.appendChild(document.createElement('br'));
+      el.appendChild(document.createTextNode(f.message.replace(/\*\*|`/g, '')));
+      out.appendChild(el);
+    });
+  }).catch(function () { out.textContent = 'Something went wrong. Try again.'; });
+};
+</script>
+</body>
+</html>
