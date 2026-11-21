@@ -1,4 +1,4 @@
-
+# CodePulse AI
 ## Newer rules: syntax and undefined names
 
 | Rule | Examples | Score penalty |
