@@ -1,4 +1,4 @@
-# Test Report - LineLens-LPU analyzer
+# Test Report - CodePulse AI analyzer
 
 The analyzer was run on **46 small code samples** (24 with a known mistake, 22 correct).
 
@@ -71,4 +71,3 @@ Run it yourself: `node run-tests.js`
 - The "undefined name" check works for Python only.
 - The samples were written by the project team, so real-world results on unseen code may be lower than 100%.
 - These samples are small on purpose: the bot is built to catch beginner mistakes, including in very short programs.
-- 
