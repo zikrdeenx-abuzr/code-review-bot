@@ -1,10 +1,8 @@
 'use strict';
 // python-traps.js - deep Python-only traps that a plain syntax checker misses:
-// security (eval/exec), identity-vs-equality bugs, scope leaks, mutable defaults,
-// and other "the code runs, but it's a landmine" patterns.
-// No dependencies. Standalone: does not require analyzer.js (keeps the two decoupled).
-// Called with the FULL file content; the caller (analyzer.js) keeps only findings
-// whose line number is inside the PR's added lines.
+// security (eval/exec, SQL injection), identity-vs-equality bugs, scope leaks,
+// mutable defaults, division by zero, and other landmine patterns.
+// No dependencies. Standalone: does not require analyzer.js.
 
 /* ---------- local helpers (kept self-contained on purpose) ---------- */
 
@@ -109,8 +107,7 @@ function collectDefinedNames(stripped) {
 
 /* ================= individual trap checks ================= */
 
-// 1. eval()/exec() - mandatory heavy penalty + score cap (handled by caller via PENALTY + a special
-//    'unsafe-eval' marker analyzer.js looks for to cap the final score at 70)
+// 1. eval()/exec() - mandatory heavy penalty + score cap
 function checkUnsafeEval(lines, flag) {
   const re = /(?<![\w.])(eval|exec)\s*\(/;
   for (let i = 0; i < lines.length; i++) {
@@ -228,8 +225,6 @@ function checkStringBoolMultiply(lines, flag) {
 
 // 9. missing comma between adjacent string literals in a list -> implicit concatenation
 function checkImplicitConcat(lines, flag) {
-  // lines are already stripped: string insides are blank, only the quote marks remain.
-  // Pair the quotes into string spans and look for two spans with only spaces between them.
   for (let i = 0; i < lines.length; i++) {
     const ln = lines[i];
     if (ln.includes('"""') || ln.includes("'''")) continue;
@@ -313,7 +308,7 @@ function checkUnreachableCode(lines, flag) {
         flag('unreachable-code', j + 1,
           `💀 **Unreachable code.** This line can never run: the line above always \`${kw}\`s out of this block before execution reaches here. Remove it, or move it before the \`${kw}\`.`);
       }
-      break; // only the very next real line matters
+      break;
     }
   }
 }
@@ -356,7 +351,7 @@ function checkUnboundLocal(lines, flag) {
     if (end === i) continue;
 
     const bodyText = lines.slice(i + 1, end + 1).join('\n');
-    if (/\b(global|nonlocal)\b/.test(bodyText)) continue; // be conservative: skip if explicit scope control is used
+    if (/\b(global|nonlocal)\b/.test(bodyText)) continue;
 
     const firstAssign = new Map();
     for (let j = i + 1; j <= end; j++) {
@@ -376,6 +371,8 @@ function checkUnboundLocal(lines, flag) {
       while (!flagged && (m = re.exec(text))) {
         const name = m[0];
         if (!firstAssign.has(name)) continue;
+        // Ignore attribute/method calls like conn.cursor()
+        if (m.index > 0 && text[m.index - 1] === '.') continue;
         const fLine = firstAssign.get(name);
         if (j > fLine) continue;
         if (j === fLine) {
@@ -427,24 +424,49 @@ function checkScopeLeak(lines, flag) {
 
     const before = lines.slice(0, i).join('\n');
     for (const name of names) {
-      const definedBefore = new RegExp(`^\\s*${name}\\s*=(?!=)|\\bdef\\s+${name}\\b|\\bfor\\s+${name}\\b|\\bas\\s+${name}\\b`, 'm').test(before);
-      if (definedBefore) continue;
+      if (name === '_') continue;
+      const definedBefore = new RegExp(`^\\s*${name}\\s*=(?!=)|\\bdef\\s+\\w+\\s*\\([^)]*\\b${name}\\b`, 'm');
+      if (definedBefore.test(before)) continue;
 
+      const useRe = new RegExp(`(?<!\\.)\\b${name}\\b`);
+      const assignRe = new RegExp(`^\\s*${name}\\s*=(?!=)`);
       for (let j = end + 1; j < lines.length; j++) {
         const t = lines[j].trim();
         if (t === '') continue;
-        if (indentOf(lines[j]) > ind) break;
-        if (new RegExp(`\\b${name}\\b`).test(lines[j])) {
+        if (indentOf(lines[j]) < ind) break;
+        if (assignRe.test(lines[j])) break;
+        if (useRe.test(lines[j])) {
           flag('scope-leak', j + 1,
-            `🧯 **Loop variable \`${name}\` used after the loop ends.** \`${name}\` only reliably exists if the loop body ran at least once (e.g. the sequence wasn't empty) — relying on it outside the loop is fragile. Initialize \`${name}\` before the loop, or compute what you need differently.`);
+            `🫧 **Loop variable \`${name}\` used after the loop.** If the loop runs zero times, \`${name}\` is never assigned and this raises \`NameError\`. Initialize \`${name}\` before the loop if you need it afterward.`);
+          break;
         }
-        break;
       }
     }
   }
 }
 
-/* ================= public API ================= */
+// 18. SQL Injection via string concatenation or f-strings
+function checkSqlInjection(orig, flag) {
+  const re = /(["'])(?:SELECT|INSERT|UPDATE|DELETE)\b[^"']*\1\s*\+|f(["'])(?:SELECT|INSERT|UPDATE|DELETE)\b[^"']*\{/i;
+  for (let i = 0; i < orig.length; i++) {
+    if (orig[i].trim().startsWith('#')) continue;
+    if (re.test(orig[i])) {
+      flag('sql-injection', i + 1,
+        '💉 **SQL Injection risk.** Building SQL queries by joining strings (`+`) or f-strings lets attackers inject malicious SQL. Use parameterized queries instead (e.g. `cursor.execute("SELECT * FROM users WHERE name = ?", (username,))`).');
+    }
+  }
+}
+
+// 19. Direct division or modulo by zero
+function checkZeroDivision(lines, flag) {
+  const re = /(?<!\/)\/(?!\/)\s*0(?:\.0+)?\b|\/\/\s*0(?:\.0+)?\b|%\s*0(?:\.0+)?\b/;
+  for (let i = 0; i < lines.length; i++) {
+    if (re.test(lines[i])) {
+      flag('zero-division', i + 1,
+        '💥 **Division by zero.** Dividing or taking modulo by `0` will immediately crash the program with `ZeroDivisionError` at runtime.');
+    }
+  }
+}
 
 const PENALTY = {
   'unbound-local': 15,
@@ -464,6 +486,8 @@ const PENALTY = {
   'mixed-indentation': 0,
   'unsafe-os-system': 0,
   'scope-leak': 10,
+  'sql-injection': 25,
+  'zero-division': 20,
 };
 
 const LABEL = {
@@ -484,6 +508,8 @@ const LABEL = {
   'mixed-indentation': 'mixed tabs/spaces',
   'unsafe-os-system': 'os.system with dynamic input',
   'scope-leak': 'loop variable used after the loop',
+  'sql-injection': 'SQL injection risk',
+  'zero-division': 'division by zero',
 };
 
 function trapFindings(content) {
@@ -511,6 +537,8 @@ function trapFindings(content) {
   checkUnboundLocal(lines, flag);
   checkShortCircuitUndefined(stripped, lines, flag);
   checkScopeLeak(lines, flag);
+  checkSqlInjection(orig, flag);
+  checkZeroDivision(lines, flag);
 
   return out;
 }
