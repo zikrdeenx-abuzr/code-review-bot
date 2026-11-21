@@ -88,7 +88,7 @@ for (const m of misses) console.log(' !', m);
 
 if (process.argv.includes('--report')) {
   const lines = [];
-  lines.push('# Test Report - LineLens-LPU analyzer');
+  lines.push('# Test Report - CodePulse AI analyzer');
   lines.push('');
   lines.push(`The analyzer was run on **${BAD.length + GOOD.length} small code samples** (${BAD.length} with a known mistake, ${GOOD.length} correct).`);
   lines.push('');
