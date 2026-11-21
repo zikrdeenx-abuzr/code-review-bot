@@ -59,13 +59,18 @@ nav{display:flex;justify-content:space-between;align-items:center;padding:14px 2
 .tabs{display:flex;border-bottom:1px solid var(--line);background:rgba(255,255,255,.9)}
 .tabs button{background:none;border:0;border-bottom:2px solid transparent;padding:11px 14px;color:var(--mu);font-weight:500}.tabs button.on{color:var(--tx);border-color:var(--ac)}
 .out{flex:1;overflow:auto;-webkit-overflow-scrolling:touch;padding:14px}
+.impact{background:rgba(16,185,129,.12);border:1px solid rgba(5,150,105,.35);color:#065F46;border-radius:10px;padding:10px 12px;margin-bottom:12px;font-weight:600;font-size:13px}
 .score{display:flex;gap:14px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-bottom:14px}
 .score-l{display:flex;gap:14px;align-items:center}
 .ring{width:72px;height:72px;border-radius:50%;display:grid;place-items:center;font-weight:700;font-size:21px;position:relative;flex-shrink:0}
 .ring::after{content:"";position:absolute;inset:7px;border-radius:50%;background:#fff}.ring span{position:relative;z-index:1}
-.iss{border:1px solid var(--line);border-left-width:4px;border-radius:10px;padding:10px 12px;margin-bottom:8px;background:#fff}
-.iss b{display:block;margin:4px 0 2px}.iss p{margin:0;color:var(--mu)}
-.badge{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;margin-right:6px}
+.iss{border:1px solid var(--line);border-left-width:4px;border-radius:10px;padding:10px 12px;margin-bottom:8px;background:#fff;cursor:pointer;transition:transform .12s ease,box-shadow .12s ease}
+.iss:hover{transform:translateX(2px);box-shadow:0 4px 12px rgba(15,23,42,.08)}
+.iss-top{display:flex;align-items:center;flex-wrap:wrap;gap:6px}
+.iss b{display:block;margin:5px 0 2px}.iss p{margin:0;color:var(--mu)}
+.badge{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em}
+.owasp{font-size:10.5px;font-weight:600;padding:2px 7px;border-radius:999px;background:#EEF2FF;color:#4338CA;border:1px solid rgba(99,102,241,.25);font-family:'JetBrains Mono',monospace}
+.jump{margin-left:auto;font-size:11px;color:var(--ac);font-weight:600}
 .critical{border-left-color:var(--cr)}.critical .badge{color:var(--cr)}
 .warning{border-left-color:var(--am)}.warning .badge{color:var(--am)}
 .optimization{border-left-color:var(--em)}.optimization .badge{color:var(--em)}
@@ -84,15 +89,15 @@ nav{display:flex;justify-content:space-between;align-items:center;padding:14px 2
   <nav><div class="logo">Code<i>Pulse</i> AI</div><button class="btn" data-go="auth">Open Audit Studio</button></nav>
   <section class="hero">
     <h1>Audit code. Get it repaired.</h1>
-    <p>Paste code in any language. CodePulse AI finds bugs, security holes and slow spots, then hands back a fixed version with a changelog.</p>
+    <p>Paste code in any language. CodePulse AI finds bugs, OWASP security flaws and slow spots, then hands back a safely repaired version with a changelog.</p>
     <button class="btn" data-go="auth">Open Audit Studio</button>
   </section>
   <section class="bento">
     <div class="card wide"><h3>Live diff preview</h3>
 <div class="dl"><span class="r">- query = "SELECT * FROM users WHERE id=" + uid</span><span class="g">+ query = "SELECT * FROM users WHERE id = %s"</span><span class="g">+ cursor.execute(query, (uid,))</span></div></div>
     <div class="card"><h3>Languages</h3><div class="chips"><span class="chip">Python</span><span class="chip">C++</span><span class="chip">Java</span><span class="chip">JavaScript</span><span class="chip">TypeScript</span><span class="chip">Go</span><span class="chip">SQL</span><span class="chip">HTML/CSS</span></div></div>
-    <div class="card"><h3>Five audit tiers</h3><p>Syntax, logic, security, performance, clean code.</p></div>
-    <div class="card"><h3>Health score</h3><p>A 0 to 100 score with exact line numbers for every issue.</p></div>
+    <div class="card"><h3>OWASP &amp; CWE Tagged</h3><p>Industry-standard security mapping across five audit tiers.</p></div>
+    <div class="card"><h3>Health score</h3><p>A 0 to 100 score with click-to-jump line navigation.</p></div>
     <div class="card"><h3>Instant demo login</h3><p>No email setup. A one-time code appears on screen.</p></div>
   </section>
 </div>
@@ -119,13 +124,13 @@ nav{display:flex;justify-content:space-between;align-items:center;padding:14px 2
     <div class="logo">Code<i>Pulse</i></div>
     <select id="lang"><option value="auto">Auto-detect</option><option>Python</option><option>C++</option><option>Java</option><option>JavaScript</option><option>TypeScript</option><option>Go</option><option>SQL</option><option>HTML/CSS</option></select>
     <div class="seg" id="depth"><button data-d="basic">Basic</button><button data-d="standard" class="on">Standard</button><button data-d="deep">Deep Security &amp; Performance</button></div>
-    <select id="preset"><option value="">Samples</option><option value="0">Basic Bug</option><option value="1">SQL Injection</option><option value="2">O(n^2) Bottleneck</option></select>
+    <select id="preset"><option value="">Samples</option><option value="3">Enterprise Demo (9 Bugs)</option><option value="0">Basic Bug</option><option value="1">SQL Injection</option><option value="2">O(n^2) Bottleneck</option></select>
     <button class="btn ghost" id="upload">Upload file</button><input id="file" type="file" hidden>
     <div class="sp"></div>
     <button class="btn" id="run">Run Audit</button>
   </div>
   <div class="work">
-    <div class="pane">
+    <div class="pane" id="edPane">
       <div class="ed"><div class="gut" id="gut">1</div><div class="box"><div class="hl" id="hl"></div><textarea id="code" spellcheck="false" wrap="off" placeholder="Paste code here"></textarea></div><div class="tools" id="tools"><button type="button" id="copyBtn" aria-label="Copy code">Copy</button><button type="button" class="x" id="clearBtn" aria-label="Clear all code">&#10005;</button></div></div>
     </div>
     <div class="pane" style="border:0">
@@ -139,7 +144,7 @@ nav{display:flex;justify-content:space-between;align-items:center;padding:14px 2
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 let token = sessionStorage.getItem('cp_token');
-let depth = 'standard', result = null, tab = 'report', rafId = 0;
+let depth = 'standard', result = null, tab = 'report', rafId = 0, prevScore = null, impactMsg = '';
 
 function show(v) { document.querySelectorAll('.view').forEach((x) => x.classList.toggle('on', x.id === v)); }
 document.querySelectorAll('[data-go]').forEach((b) => b.onclick = () => show(token ? 'studio' : 'auth'));
@@ -194,12 +199,46 @@ $('copyBtn').onclick = async () => {
 const SAMPLES = [
   'def average(nums):\n    total = 0\n    for i in range(len(nums) + 1):\n        total += nums[i]\n    return total / len(nums)\n\nprint(average([]))\n',
   "const db = require('./db');\n\napp.get('/user', (req, res) => {\n  const q = \"SELECT * FROM users WHERE name = '\" + req.query.name + \"'\";\n  db.query(q, (err, rows) => res.json(rows));\n});\n",
-  'def has_duplicates(items):\n    for i in range(len(items)):\n        for j in range(len(items)):\n            if i != j and items[i] == items[j]:\n                return True\n    return False\n'
+  'def has_duplicates(items):\n    for i in range(len(items)):\n        for j in range(len(items)):\n            if i != j and items[i] == items[j]:\n                return True\n    return False\n',
+  'import sqlite3\nimport hashlib\nimport pickle\nimport subprocess\nimport requests\n\nSTRIPE_SECRET_KEY = "sk_live_99887766554433221100aabb"\n\nclass PaymentGatewayService:\n    def __init__(self, db_path: str):\n        self.db_path = db_path\n\n    def queue_transactions(self, tx_id: str, pending_list=[]):\n        pending_list.append(tx_id)\n        return pending_list\n\n    def hash_card_token(self, token: str) -> str:\n        return hashlib.md5(token.encode()).hexdigest()\n\n    def load_cached_session(self, raw_bytes: bytes):\n        if raw_bytes == None:\n            return None\n        return pickle.loads(raw_bytes)\n\n    def sync_with_bank(self, endpoint: str, payload: dict):\n        try:\n            response = requests.post(endpoint, json=payload, verify=False)\n            return response.json()\n        except Exception:\n            pass\n\n    def export_audit_log(self, filename: str):\n        subprocess.run(f"tar -czf /tmp/{filename}.tar.gz /var/log/payments", shell=True)\n\n    def update_user_balance(self, user_id: str, amount: float):\n        conn = sqlite3.connect(self.db_path)\n        cursor = conn.cursor()\n        query = f"UPDATE accounts SET balance = balance + {amount} WHERE user_id = \'{user_id}\'"\n        cursor.execute(query)\n        conn.commit()\n        conn.close()\n'
 ];
 $('preset').onchange = (e) => { if (e.target.value !== '') { $('code').value = SAMPLES[e.target.value]; syncEditor(); } e.target.value = ''; };
 $('upload').onclick = () => $('file').click();
 $('file').onchange = async (e) => { const f = e.target.files[0]; if (f) { $('code').value = await f.text(); syncEditor(); } e.target.value = ''; };
 document.querySelectorAll('#depth button').forEach((b) => b.onclick = () => { depth = b.dataset.d; document.querySelectorAll('#depth button').forEach((x) => x.classList.toggle('on', x === b)); });
+
+function owaspTag(title) {
+  const t = String(title || '').toLowerCase();
+  if (t.includes('sql')) return 'OWASP A03 · CWE-89';
+  if (t.includes('shell') || t.includes('command') || t.includes('os system') || t.includes('system()')) return 'OWASP A03 · CWE-78';
+  if (t.includes('secret')) return 'OWASP A02 · CWE-798';
+  if (t.includes('eval') || t.includes('dynamic code')) return 'OWASP A03 · CWE-95';
+  if (t.includes('deserial') || t.includes('yaml')) return 'OWASP A08 · CWE-502';
+  if (t.includes('tls')) return 'OWASP A02 · CWE-295';
+  if (t.includes('weak hash')) return 'OWASP A02 · CWE-327';
+  if (t.includes('xss') || t.includes('document.write')) return 'OWASP A03 · CWE-79';
+  if (t.includes('privilege')) return 'OWASP A01 · CWE-269';
+  if (t.includes('sensitive data')) return 'OWASP A02 · CWE-200';
+  if (t.includes('password')) return 'OWASP A07 · CWE-208';
+  if (t.includes('random')) return 'OWASP A02 · CWE-338';
+  if (t.includes('debug')) return 'OWASP A05 · CWE-489';
+  if (t.includes('zero division')) return 'CWE-369';
+  return '';
+}
+
+function jumpToLine(lineNum) {
+  const ta = $('code');
+  const lines = ta.value.split('\n');
+  const idx = Math.max(0, Math.min(lines.length - 1, lineNum - 1));
+  let start = 0;
+  for (let i = 0; i < idx; i++) start += lines[i].length + 1;
+  const end = start + (lines[idx] ? lines[idx].length : 0);
+  if (window.innerWidth <= 820) $('edPane').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  ta.focus();
+  ta.setSelectionRange(start, end);
+  ta.scrollTop = Math.max(0, idx * 20.15 - ta.clientHeight / 3);
+  syncScroll();
+}
 
 function diffLines(a, b) {
   const x = a.split('\n'), y = b.split('\n'), n = x.length, m = y.length;
@@ -219,14 +258,17 @@ function diffLines(a, b) {
 function downloadReport() {
   if (!result) return;
   const lines = [
-    'CodePulse AI - Audit Report',
-    '===========================',
+    'CodePulse AI - Security & Quality Audit Report',
+    '==============================================',
     'Language: ' + result.language,
     'Health Score: ' + result.score + '/100',
     'Summary: ' + result.summary,
     '',
     'Issues Found:',
-    ...(result.issues.length ? result.issues.map((i, idx) => `${idx + 1}. [${i.severity.toUpperCase()}] Line ${i.line} (Tier ${i.tier}) - ${i.title}\n   ${i.explanation}`) : ['None. Code looks clean.'])
+    ...(result.issues.length ? result.issues.map((i, idx) => {
+      const tag = owaspTag(i.title);
+      return `${idx + 1}. [${i.severity.toUpperCase()}] Line ${i.line} (Tier ${i.tier})${tag ? ' [' + tag + ']' : ''} - ${i.title}\n   ${i.explanation}`;
+    }) : ['None. Code looks clean.'])
   ];
   const blob = new Blob([lines.join('\n')], { type: 'text/plain' });
   const a = document.createElement('a');
@@ -244,17 +286,23 @@ function render() {
     const col = result.score >= 80 ? 'var(--em)' : result.score >= 50 ? 'var(--am)' : 'var(--cr)';
     const order = { critical: 0, warning: 1, optimization: 2, style: 3 };
     const items = [...result.issues].sort((p, q) => (order[p.severity] ?? 9) - (order[q.severity] ?? 9) || p.line - q.line);
-    o.innerHTML = `<div class="score"><div class="score-l"><div class="ring" style="background:conic-gradient(${col} ${result.score * 3.6}deg,#E2E8F0 0)"><span>${result.score}</span></div><div><b>Health score</b><div style="color:var(--mu)">${esc(result.summary)}</div></div></div><button class="btn ghost" id="dlRep">Download Report</button></div>` +
-      (items.length ? items.map((i) => `<div class="iss ${esc(i.severity)}"><span class="badge">${esc(i.severity)}</span><span class="mono" style="color:var(--mu)">Line ${esc(i.line)} · Tier ${esc(i.tier)}</span><b>${esc(i.title)}</b><p>${esc(i.explanation)}</p></div>`).join('') : '<div class="empty" style="margin-top:6vh">No issues found.</div>');
+    const banner = impactMsg ? `<div class="impact">${esc(impactMsg)}</div>` : '';
+    o.innerHTML = banner + `<div class="score"><div class="score-l"><div class="ring" style="background:conic-gradient(${col} ${result.score * 3.6}deg,#E2E8F0 0)"><span>${result.score}</span></div><div><b>Health score</b><div style="color:var(--mu)">${esc(result.summary)}</div></div></div><button class="btn ghost" id="dlRep">Download Report</button></div>` +
+      (items.length ? items.map((i) => {
+        const tag = owaspTag(i.title);
+        return `<div class="iss ${esc(i.severity)}" data-line="${esc(i.line)}"><div class="iss-top"><span class="badge">${esc(i.severity)}</span><span class="mono" style="color:var(--mu)">Line ${esc(i.line)} · Tier ${esc(i.tier)}</span>${tag ? `<span class="owasp">${esc(tag)}</span>` : ''}<span class="jump">Jump ↗</span></div><b>${esc(i.title)}</b><p>${esc(i.explanation)}</p></div>`;
+      }).join('') : '<div class="empty" style="margin-top:6vh">No issues found.</div>');
     $('dlRep').onclick = downloadReport;
+    o.querySelectorAll('.iss').forEach((el) => el.onclick = () => jumpToLine(Number(el.dataset.line)));
   } else if (tab === 'diff') {
     const d = diffLines($('code').value, result.fixedCode);
     o.innerHTML = '<div class="acts"><button class="btn ok" id="applyFix">Apply Fix to Editor</button><button class="btn ghost" id="copy">Copy Repaired Code</button></div><div class="diff">' + d.map(([k, l]) => `<div class="${k}">${k === 'a' ? '+ ' : k === 'd' ? '- ' : '  '}${esc(l)}</div>`).join('') + '</div>';
     $('applyFix').onclick = () => {
+      prevScore = result.score;
       $('code').value = result.fixedCode;
       syncEditor();
       $('applyFix').textContent = 'Applied! Re-running...';
-      $('run').click();
+      runAudit(true);
     };
     $('copy').onclick = async () => { await navigator.clipboard.writeText(result.fixedCode); $('copy').textContent = 'Copied!'; setTimeout(() => { $('copy').textContent = 'Copy Repaired Code'; }, 1200); };
   } else {
@@ -263,13 +311,20 @@ function render() {
 }
 document.querySelectorAll('#tabs button').forEach((b) => b.onclick = () => { tab = b.dataset.t; render(); });
 
-$('run').onclick = async () => {
+async function runAudit(fromFix = false) {
   const code = $('code').value;
   const sel = $('lang').value;
+  if (!fromFix) { prevScore = null; impactMsg = ''; }
   $('run').disabled = true;
   $('outp').innerHTML = '<div class="empty">Auditing...</div>';
   try {
     result = await api('/api/audit', { code, language: sel === 'auto' ? 'Auto' : sel, depth });
+    if (fromFix && prevScore !== null) {
+      const diff = result.score - prevScore;
+      impactMsg = diff > 0
+        ? `Auto-Fix Impact: Health Score improved ${prevScore} → ${result.score} (+${diff} pts fixed safely)`
+        : `Auto-Fix applied. Remaining issues require manual business-logic review.`;
+    }
     tab = 'report';
     render();
   } catch (e) {
@@ -279,7 +334,8 @@ $('run').onclick = async () => {
   } finally {
     $('run').disabled = false;
   }
-};
+}
+$('run').onclick = () => runAudit(false);
 </script>
 </body>
 </html>
