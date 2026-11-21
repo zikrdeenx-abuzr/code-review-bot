@@ -163,6 +163,11 @@ const SEC = {
     ['critical', /\bnew\s+Function\s*\(/, 'Unsafe dynamic code', 'new Function() builds code from text, the same risk as eval().'],
     ['critical', /\b(child_process\.)?exec(Sync)?\s*\([^)]*(\+|\$\{)/, 'Command injection risk', 'A shell command is built from variables. Use execFile with an argument list.'],
     ['critical', /\b(query|execute)\s*\(\s*(["'`][^"'`]*["'`]\s*\+|`[^`]*\$\{)/, 'SQL injection risk', 'The SQL text is built from variables. Use placeholders (? or $1) and pass the values separately.'],
+    ['critical', /req\.(?:body|query|params)\.(?:isAdmin|role|admin)\b/i, 'Privilege escalation risk', 'Trusting client-supplied admin/role flags from req.body lets any user become an admin. Verify roles on the server via authenticated sessions/JWT.'],
+    ['critical', /\b(?:apiKey|api_key|secretKey|privateKey)\s*:\s*(?!undefined\b|null\b)/i, 'Sensitive data exposure', 'Embedding API keys or secrets inside transaction/response objects leaks credentials to clients or logs. Remove it from the payload.'],
+    ['critical', /\bpassword\s*===?\s*/i, 'Insecure password check', 'Comparing passwords directly in plaintext is unsafe and vulnerable to timing attacks. Use bcrypt.compare() or crypto.timingSafeEqual().'],
+    ['warning', /\b(?:id|token|key|secret|session)\s*[:=]\s*Math\.random\s*\(/i, 'Insecure randomness (Math.random)', 'Math.random() is not cryptographically secure and can cause ID collisions. Use crypto.randomUUID() or crypto.randomBytes().'],
+    ['warning', /(?<![=!<>])==(?!=)/, 'Loose equality (==)', 'Using == allows JavaScript type coercion bugs. Use strict equality (===) instead.'],
     ['warning', /\.innerHTML\s*\+?=(?!\s*(""|''|``)\s*;?\s*$)/, 'XSS risk (innerHTML)', 'Putting text into innerHTML can run injected scripts. Use textContent instead.'],
     ['warning', /\bdocument\.write\s*\(/, 'document.write used', 'document.write can inject scripts. Build elements with the DOM instead.'],
   ],
@@ -297,4 +302,3 @@ async function handle(req, res, url, readBody, send) {
 }
 
 module.exports = { handle, audit };
-      
