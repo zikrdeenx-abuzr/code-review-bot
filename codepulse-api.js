@@ -9,11 +9,11 @@ const HOUR = 3600 * 1000;
 
 const FILE_BY_LANG = { Python: 'a.py', Java: 'A.java', 'C++': 'a.c', JavaScript: 'a.js', TypeScript: 'a.js' };
 const SEVERITY = {
-  critical: ['syntax', 'secret', 'unsafe-eval', 'unsafe-os-system', 'undefined-name', 'unbound-local', 'self-append', 'unhashable-key'],
+  critical: ['syntax', 'secret', 'unsafe-eval', 'unsafe-os-system', 'undefined-name', 'unbound-local', 'self-append', 'unhashable-key', 'sql-injection', 'zero-division'],
   optimization: ['long-function'],
   style: ['shadow-builtin', 'none-compare', 'type-compare', 'mixed-indentation', 'scope-leak', 'unreachable-code'],
 };
-const TIER = { syntax: 1, 'undefined-name': 2, secret: 3, 'unsafe-eval': 3, 'unsafe-os-system': 3, 'long-function': 4 };
+const TIER = { syntax: 1, 'undefined-name': 2, secret: 3, 'unsafe-eval': 3, 'unsafe-os-system': 3, 'sql-injection': 3, 'zero-division': 3, 'long-function': 4 };
 
 function severityOf(rule) {
   for (const [s, rules] of Object.entries(SEVERITY)) if (rules.includes(rule)) return s;
@@ -136,7 +136,7 @@ const SEC = {
     ['critical', /\bpickle\.loads?\(/, 'Unsafe deserialization', 'pickle can execute code while loading data. Never unpickle untrusted data; use JSON instead.'],
     ['critical', /\byaml\.load\((?![^)]*SafeLoader)/, 'Unsafe YAML load', 'yaml.load can build arbitrary objects. Use yaml.safe_load instead.'],
     ['critical', /verify\s*=\s*False/, 'TLS verification disabled', 'verify=False turns off certificate checks, so the connection can be intercepted. Remove it.'],
-    ['critical', /\.execute\(\s*(f["']|"[^"]*"\s*[+%]|'[^']*'\s*[+%])/, 'SQL injection risk', 'The SQL text is built from variables. Use placeholders: cursor.execute("... WHERE id = %s", (value,)).'],
+    ['critical', /\.execute\(\s*(f["']|"[^"]*"\s*[+%]|'[^']*'\s*[+%])|f(["'])(?:SELECT|INSERT|UPDATE|DELETE)\b.*?\{|(["'])(?:SELECT|INSERT|UPDATE|DELETE)\b.*?\3\s*[+%]/i, 'SQL injection risk', 'The SQL text is built from variables. Use parameterized queries: cursor.execute("... WHERE id = ?", (value,)).'],
     ['warning', /hashlib\.(md5|sha1)\(/, 'Weak hash', 'MD5 and SHA-1 are broken for security use. Use SHA-256 (or bcrypt/argon2 for passwords).'],
     ['warning', /\.run\([^)]*debug\s*=\s*True/, 'Debug mode on', 'debug=True exposes an interactive debugger. Turn it off in production.'],
   ],
@@ -214,9 +214,11 @@ function audit(code, language, depth) {
     line: f.line, severity: severityOf(f.rule), tier: TIER[f.rule] || 5,
     title: titleOf(f.rule), explanation: stripMd(f.message),
   }));
-  const taken = new Set(issues.filter((x) => x.title === 'Unsafe eval').map((x) => x.line));
+  const takenEval = new Set(issues.filter((x) => x.title === 'Unsafe eval').map((x) => x.line));
+  const takenSql = new Set(issues.filter((x) => /sql injection/i.test(x.title)).map((x) => x.line));
   for (const x of securityScan(code, language)) {
-    if (x.title === 'Unsafe eval' && taken.has(x.line)) continue;
+    if (x.title === 'Unsafe eval' && takenEval.has(x.line)) continue;
+    if (/sql injection/i.test(x.title) && takenSql.has(x.line)) continue;
     issues.push(x);
   }
   let shown = issues;
