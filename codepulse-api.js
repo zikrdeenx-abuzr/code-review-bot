@@ -22,7 +22,7 @@ function severityOf(rule) {
 function titleOf(rule) { return rule.replace(/-/g, ' ').replace(/^./, (c) => c.toUpperCase()); }
 function stripMd(s) { return String(s).replace(/\*\*/g, '').replace(/`/g, ''); }
 
-// safe, line-level auto fixes only
+// safe, line-level auto fixes
 function autoFix(code, language, findings) {
   const lines = code.split('\n');
   const log = [];
@@ -49,6 +49,24 @@ function autoFix(code, language, findings) {
       log.push({ change: `Line ${f.line}: ${before.trim()}  ->  ${after.trim()}`, reason: stripMd(f.message).split('\n')[0].slice(0, 140) });
     }
   }
+
+  // Extra safe security hardening fixes for Python (TLS, Weak Hash, Shell, Debug)
+  if (language === 'Python') {
+    for (let idx = 0; idx < lines.length; idx++) {
+      const before = lines[idx];
+      if (before.trim().startsWith('#')) continue;
+      let after = before;
+      after = after.replace(/verify\s*=\s*False\b/, 'verify=True');
+      after = after.replace(/hashlib\.(md5|sha1)\(/, 'hashlib.sha256(');
+      after = after.replace(/shell\s*=\s*True\b/, 'shell=False');
+      after = after.replace(/debug\s*=\s*True\b/, 'debug=False');
+      if (after !== before) {
+        lines[idx] = after;
+        log.push({ change: `Line ${idx + 1}: ${before.trim()}  ->  ${after.trim()}`, reason: 'Hardened insecure default (TLS/Hash/Shell/Debug).' });
+      }
+    }
+  }
+
   if (needsOs && !lines.some((l) => /^\s*import\s+os\b/.test(l))) {
     lines.unshift('import os');
     log.push({ change: 'Added `import os` at the top', reason: 'Needed for os.getenv() used by the secret fixes.' });
@@ -279,3 +297,4 @@ async function handle(req, res, url, readBody, send) {
 }
 
 module.exports = { handle, audit };
+      
