@@ -293,4 +293,68 @@ function audit(code, language, depth) {
   }));
   const takenEval = new Set(issues.filter((x) => x.title === 'Unsafe eval').map((x) => x.line));
   const takenSql = new Set(issues.filter((x) => /sql injection/i.test(x.title)).map((x) => x.line));
-  for (const x of securityScan(code, languag
+  for (const x of securityScan(code, language)) {
+    if (x.title === 'Unsafe eval' && takenEval.has(x.line)) continue;
+    if (/sql injection/i.test(x.title) && takenSql.has(x.line)) continue;
+    issues.push(x);
+  }
+  let shown = issues;
+  if (depth === 'basic') shown = issues.filter((x) => x.severity === 'critical');
+  shown.sort((p, q) => p.line - q.line);
+  shown.forEach((item, idx) => { item.id = 'CP-' + String(idx + 1).padStart(2, '0'); });
+
+  const base = depth === 'basic' ? a.scoreOf(findings.filter((f) => severityOf(f.rule) === 'critical')) : r.score;
+  const extraPen = shown.filter((x) => !findings.some((f) => f.line === x.line && titleOf(f.rule) === x.title))
+    .reduce((n, x) => n + (x.severity === 'critical' ? 15 : 6), 0);
+  const score = Math.max(0, base - extraPen);
+  const scores = computeCategoryScores(shown);
+  const fix = autoFix(code, language, findings);
+  const sev = shown.length ? `${shown.length} issue${shown.length > 1 ? 's' : ''} found.` : 'No issues found. Code looks clean.';
+  const note = FILE_FOR[language] && ['Python', 'JavaScript', 'TypeScript', 'Java', 'C++', 'Dependencies'].includes(language) ? '' : ' (security rules only for this language)';
+  return { language, score, scores, summary: `Detected: ${language}. ${sev}${note}`, issues: shown, fixedCode: fix.fixedCode, changelog: fix.changelog };
+}
+
+function newToken(email) {
+  const t = crypto.randomBytes(24).toString('hex');
+  tokens.set(t, { email, exp: Date.now() + 12 * HOUR });
+  return t;
+}
+function authed(req) {
+  const h = req.headers.authorization || '';
+  const s = tokens.get(h.startsWith('Bearer ') ? h.slice(7) : '');
+  return s && s.exp > Date.now() ? s : null;
+}
+
+async function handle(req, res, url, readBody, send) {
+  if (req.method !== 'POST' || !url.startsWith('/api/')) return false;
+  const body = async () => { try { return JSON.parse((await readBody(req, 1000000)).toString() || '{}'); } catch (e) { return {}; } };
+
+  if (url === '/api/auth/guest') { send(res, 200, { token: newToken('guest') }); return true; }
+  if (url === '/api/auth/request') {
+    const { email } = await body();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email || '')) { send(res, 400, { error: 'Enter a valid email address.' }); return true; }
+    const code = String(crypto.randomInt(100000, 1000000));
+    codes.set(email.toLowerCase(), { code, exp: Date.now() + 5 * 60 * 1000 });
+    send(res, 200, { demoCode: code });
+    return true;
+  }
+  if (url === '/api/auth/verify') {
+    const { email, code } = await body();
+    const key = String(email || '').toLowerCase();
+    const c = codes.get(key);
+    if (!c || c.exp < Date.now() || c.code !== String(code || '')) { send(res, 400, { error: 'Wrong or expired code.' }); return true; }
+    codes.delete(key);
+    send(res, 200, { token: newToken(email) });
+    return true;
+  }
+  if (url === '/api/audit') {
+    if (!authed(req)) { send(res, 401, { error: 'Please sign in again.' }); return true; }
+    const { code, language, depth } = await body();
+    if (!code || !String(code).trim()) { send(res, 400, { error: 'Paste some code first.' }); return true; }
+    send(res, 200, audit(String(code), language || 'Python', depth || 'standard'));
+    return true;
+  }
+  return false;
+}
+
+module.exports = { handle, audit };
