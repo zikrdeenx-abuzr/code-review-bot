@@ -1,5 +1,5 @@
 'use strict';
-// codepulse-api.js - login + /api/audit for the CodePulse AI web page. No dependencies.
+// codepulse-api.js - login + /api/audit for CodePulse LPU V2.0. No dependencies.
 const crypto = require('crypto');
 const a = require('./analyzer.js');
 
@@ -7,7 +7,6 @@ const tokens = new Map();   // token -> { email, exp }
 const codes = new Map();    // email -> { code, exp }
 const HOUR = 3600 * 1000;
 
-const FILE_BY_LANG = { Python: 'a.py', Java: 'A.java', 'C++': 'a.c', JavaScript: 'a.js', TypeScript: 'a.js' };
 const SEVERITY = {
   critical: ['syntax', 'secret', 'unsafe-eval', 'unsafe-os-system', 'undefined-name', 'unbound-local', 'self-append', 'unhashable-key', 'sql-injection', 'zero-division'],
   optimization: ['long-function'],
@@ -22,12 +21,13 @@ function severityOf(rule) {
 function titleOf(rule) { return rule.replace(/-/g, ' ').replace(/^./, (c) => c.toUpperCase()); }
 function stripMd(s) { return String(s).replace(/\*\*/g, '').replace(/`/g, ''); }
 
-// safe, line-level auto fixes
+// Safe, line-level auto fixes (V2.0)
 function autoFix(code, language, findings) {
   const lines = code.split('\n');
   const log = [];
   let needsOs = false;
   const isJs = language === 'JavaScript' || language === 'TypeScript';
+
   for (const f of findings) {
     const i = f.line - 1;
     if (i < 0 || i >= lines.length) continue;
@@ -50,7 +50,7 @@ function autoFix(code, language, findings) {
     }
   }
 
-  // Extra safe security hardening fixes for Python (TLS, Weak Hash, Shell, Debug)
+  // Extra safe security hardening fixes for Python
   if (language === 'Python') {
     for (let idx = 0; idx < lines.length; idx++) {
       const before = lines[idx];
@@ -60,9 +60,32 @@ function autoFix(code, language, findings) {
       after = after.replace(/hashlib\.(md5|sha1)\(/, 'hashlib.sha256(');
       after = after.replace(/shell\s*=\s*True\b/, 'shell=False');
       after = after.replace(/debug\s*=\s*True\b/, 'debug=False');
+      after = after.replace(/\byaml\.load\((?![^)]*SafeLoader)/, 'yaml.safe_load(');
       if (after !== before) {
         lines[idx] = after;
-        log.push({ change: `Line ${idx + 1}: ${before.trim()}  ->  ${after.trim()}`, reason: 'Hardened insecure default (TLS/Hash/Shell/Debug).' });
+        log.push({ change: `Line ${idx + 1}: ${before.trim()}  ->  ${after.trim()}`, reason: 'Hardened insecure Python default (TLS/Hash/Shell/Debug/YAML).' });
+      }
+    }
+  }
+
+  // Extra safe fixes for JavaScript / TypeScript
+  if (isJs) {
+    for (let idx = 0; idx < lines.length; idx++) {
+      const before = lines[idx];
+      const tr = before.trim();
+      if (tr.startsWith('//') || tr.startsWith('*')) continue;
+      let after = before;
+      // Replace Math.random() used for IDs/tokens with crypto.randomUUID()
+      if (/\b(?:id|token|key|secret|session|transactionId)\s*[:=]\s*Math\.random\s*\(\)(?:\.toString\(\d+\))?/i.test(after)) {
+        after = after.replace(/Math\.random\s*\(\)(?:\.toString\(\d+\))?/, 'crypto.randomUUID()');
+      }
+      // Replace loose equality (==) with strict (===) except when comparing to null/undefined
+      if (/(?<![=!<>])==(?!=)/.test(after) && !/==\s*(null|undefined)\b/.test(after)) {
+        after = after.replace(/(?<![=!<>])==(?!=)/g, '===');
+      }
+      if (after !== before) {
+        lines[idx] = after;
+        log.push({ change: `Line ${idx + 1}: ${before.trim()}  ->  ${after.trim()}`, reason: 'Applied safe JS hardening (strict equality / secure UUID).' });
       }
     }
   }
@@ -74,10 +97,11 @@ function autoFix(code, language, findings) {
   return { fixedCode: lines.join('\n'), changelog: log };
 }
 
-/* ---------- language detection (used when the page sends "Auto") ---------- */
-const FILE_FOR = { Python: 'a.py', JavaScript: 'a.js', TypeScript: 'a.js', Java: 'A.java', 'C++': 'a.c', Go: 'a.go', SQL: 'a.sql', 'HTML/CSS': 'a.html' };
+/* ---------- language detection ---------- */
+const FILE_FOR = { Python: 'a.py', JavaScript: 'a.js', TypeScript: 'a.js', Java: 'A.java', 'C++': 'a.c', Go: 'a.go', SQL: 'a.sql', 'HTML/CSS': 'a.html', Dependencies: 'package.json' };
 
 function detectLanguage(code) {
+  if (/^\s*\{[\s\S]*"dependencies"\s*:/.test(code)) return 'Dependencies';
   const noBlock = code.replace(/\/\*[\s\S]*?\*\//g, ' ');
   const bare = noBlock.replace(/("""[\s\S]*?"""|'''[\s\S]*?'''|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|`[^`]*`)/g, '""');
   const sc = { Java: 0, 'C++': 0, Go: 0, SQL: 0, 'HTML/CSS': 0, JavaScript: 0, Python: 0 };
@@ -140,60 +164,72 @@ function detectLanguage(code) {
   return /;\s*$/m.test(bare) ? 'JavaScript' : 'Python';
 }
 
-// Older page versions send a guess; if it says JavaScript but the code is clearly Python, use Python.
 function fixLanguage(code, language) {
+  if (/^\s*\{[\s\S]*"dependencies"\s*:/.test(code)) return 'Dependencies';
   if (language !== 'JavaScript' && language !== 'TypeScript') return language;
   const d = detectLanguage(code);
   return d === 'Python' ? 'Python' : language;
 }
 
-/* ---------- extra security rules (conservative, to avoid false alarms) ---------- */
+/* ---------- V2.0 Security, Business Logic & Dependency Rules ---------- */
+// Format: [severity, regex, title, message, category, confidence]
 const SEC = {
   Python: [
-    ['critical', /subprocess\.\w+\([^)]*shell\s*=\s*True/, 'Shell injection risk', 'subprocess with shell=True can run injected commands. Pass a list of arguments and remove shell=True.'],
-    ['critical', /\bpickle\.loads?\(/, 'Unsafe deserialization', 'pickle can execute code while loading data. Never unpickle untrusted data; use JSON instead.'],
-    ['critical', /\byaml\.load\((?![^)]*SafeLoader)/, 'Unsafe YAML load', 'yaml.load can build arbitrary objects. Use yaml.safe_load instead.'],
-    ['critical', /verify\s*=\s*False/, 'TLS verification disabled', 'verify=False turns off certificate checks, so the connection can be intercepted. Remove it.'],
-    ['critical', /\.execute\(\s*(f["']|"[^"]*"\s*[+%]|'[^']*'\s*[+%])|f(["'])(?:SELECT|INSERT|UPDATE|DELETE)\b.*?\{|(["'])(?:SELECT|INSERT|UPDATE|DELETE)\b.*?\3\s*[+%]/i, 'SQL injection risk', 'The SQL text is built from variables. Use parameterized queries: cursor.execute("... WHERE id = ?", (value,)).'],
-    ['warning', /hashlib\.(md5|sha1)\(/, 'Weak hash', 'MD5 and SHA-1 are broken for security use. Use SHA-256 (or bcrypt/argon2 for passwords).'],
-    ['warning', /\.run\([^)]*debug\s*=\s*True/, 'Debug mode on', 'debug=True exposes an interactive debugger. Turn it off in production.'],
+    ['critical', /subprocess\.\w+\([^)]*shell\s*=\s*True/, 'Shell injection risk', 'subprocess with shell=True can run injected commands. Pass a list of arguments and remove shell=True.', 'security', 'Confirmed'],
+    ['critical', /\bpickle\.loads?\(/, 'Unsafe deserialization', 'pickle can execute code while loading data. Never unpickle untrusted data; use JSON instead.', 'security', 'Confirmed'],
+    ['critical', /\byaml\.load\((?![^)]*SafeLoader)/, 'Unsafe YAML load', 'yaml.load can build arbitrary objects. Use yaml.safe_load instead.', 'security', 'Confirmed'],
+    ['critical', /verify\s*=\s*False/, 'TLS verification disabled', 'verify=False turns off certificate checks, so the connection can be intercepted. Remove it.', 'security', 'Confirmed'],
+    ['critical', /\.execute\(\s*(f["']|"[^"]*"\s*[+%]|'[^']*'\s*[+%])|f(["'])(?:SELECT|INSERT|UPDATE|DELETE)\b.*?\{|(["'])(?:SELECT|INSERT|UPDATE|DELETE)\b.*?\3\s*[+%]/i, 'SQL injection risk', 'The SQL text is built from variables. Use parameterized queries: cursor.execute("... WHERE id = ?", (value,)).', 'security', 'Confirmed'],
+    ['critical', /\brequests\.(?:get|post|put)\(\s*(?:request\.|user_?url|url\b)/i, 'Potential SSRF risk', 'Passing unvalidated user-controlled URLs to requests can allow Server-Side Request Forgery. Validate against an allowlist.', 'security', 'Potential'],
+    ['warning', /hashlib\.(md5|sha1)\(/, 'Weak hash', 'MD5 and SHA-1 are broken for security use. Use SHA-256 (or bcrypt/argon2 for passwords).', 'security', 'Confirmed'],
+    ['warning', /\.run\([^)]*debug\s*=\s*True/, 'Debug mode on', 'debug=True exposes an interactive debugger. Turn it off in production.', 'security', 'Confirmed'],
   ],
   JavaScript: [
-    ['critical', /\beval\s*\(/, 'Unsafe eval', 'eval() runs any text as code. Parse data with JSON.parse or use real functions instead.'],
-    ['critical', /\bnew\s+Function\s*\(/, 'Unsafe dynamic code', 'new Function() builds code from text, the same risk as eval().'],
-    ['critical', /\b(child_process\.)?exec(Sync)?\s*\([^)]*(\+|\$\{)/, 'Command injection risk', 'A shell command is built from variables. Use execFile with an argument list.'],
-    ['critical', /\b(query|execute)\s*\(\s*(["'`][^"'`]*["'`]\s*\+|`[^`]*\$\{)/, 'SQL injection risk', 'The SQL text is built from variables. Use placeholders (? or $1) and pass the values separately.'],
-    ['critical', /req\.(?:body|query|params)\.(?:isAdmin|role|admin)\b/i, 'Privilege escalation risk', 'Trusting client-supplied admin/role flags from req.body lets any user become an admin. Verify roles on the server via authenticated sessions/JWT.'],
-    ['critical', /\b(?:apiKey|api_key|secretKey|privateKey)\s*:\s*(?!undefined\b|null\b)/i, 'Sensitive data exposure', 'Embedding API keys or secrets inside transaction/response objects leaks credentials to clients or logs. Remove it from the payload.'],
-    ['critical', /\bpassword\s*===?\s*/i, 'Insecure password check', 'Comparing passwords directly in plaintext is unsafe and vulnerable to timing attacks. Use bcrypt.compare() or crypto.timingSafeEqual().'],
-    ['warning', /\b(?:id|token|key|secret|session)\s*[:=]\s*Math\.random\s*\(/i, 'Insecure randomness (Math.random)', 'Math.random() is not cryptographically secure and can cause ID collisions. Use crypto.randomUUID() or crypto.randomBytes().'],
-    ['warning', /(?<![=!<>])==(?!=)/, 'Loose equality (==)', 'Using == allows JavaScript type coercion bugs. Use strict equality (===) instead.'],
-    ['warning', /\.innerHTML\s*\+?=(?!\s*(""|''|``)\s*;?\s*$)/, 'XSS risk (innerHTML)', 'Putting text into innerHTML can run injected scripts. Use textContent instead.'],
-    ['warning', /\bdocument\.write\s*\(/, 'document.write used', 'document.write can inject scripts. Build elements with the DOM instead.'],
+    ['critical', /\beval\s*\(/, 'Unsafe eval', 'eval() runs any text as code. Parse data with JSON.parse or use real functions instead.', 'security', 'Confirmed'],
+    ['critical', /\bnew\s+Function\s*\(/, 'Unsafe dynamic code', 'new Function() builds code from text, the same risk as eval().', 'security', 'Confirmed'],
+    ['critical', /\b(child_process\.)?exec(Sync)?\s*\([^)]*(\+|\$\{)/, 'Command injection risk', 'A shell command is built from variables. Use execFile with an argument list.', 'security', 'Confirmed'],
+    ['critical', /\b(query|execute)\s*\(\s*(["'`][^"'`]*["'`]\s*\+|`[^`]*\$\{)/, 'SQL injection risk', 'The SQL text is built from variables. Use placeholders (? or $1) and pass the values separately.', 'security', 'Confirmed'],
+    ['critical', /req\.(?:body|query|params)\.(?:isAdmin|role|admin)\b/i, 'Privilege escalation risk', 'Trusting client-supplied admin/role flags from req.body lets any user become an admin. Verify roles on the server via authenticated sessions/JWT.', 'security', 'Confirmed'],
+    ['critical', /Object\.assign\s*\([^,]+,\s*req\.(?:body|query)/, 'Mass assignment risk', 'Passing req.body directly into Object.assign lets attackers overwrite sensitive fields like role or balance. Pick allowed fields explicitly.', 'security', 'Confirmed'],
+    ['critical', /\bfs\.(?:readFile|readFileSync|createReadStream|unlink)\s*\([^)]*req\.(?:query|params|body)/, 'Path traversal risk', 'Using unvalidated user input in file paths allows attackers to read arbitrary server files (../). Sanitize with path.basename().', 'security', 'Confirmed'],
+    ['critical', /\b(?:fetch|axios\.(?:get|post))\s*\(\s*req\.(?:body|query|params)/, 'SSRF risk', 'Making outbound HTTP requests to user-supplied URLs allows Server-Side Request Forgery. Validate hostnames against an allowlist.', 'security', 'Confirmed'],
+    ['critical', /req\.body\.(?:price|discount|total|isPaid|balance)\b/i, 'Client-side business logic manipulation', 'Trusting price, discount, or payment status from req.body lets attackers pay 0 or negative amounts. Always calculate prices and verify payment on the server.', 'logic', 'Confirmed'],
+    ['critical', /\b(?:apiKey|api_key|secretKey|privateKey)\s*:\s*(?!undefined\b|null\b)/i, 'Sensitive data exposure', 'Embedding API keys or secrets inside transaction/response objects leaks credentials to clients or logs. Remove it from the payload.', 'security', 'Confirmed'],
+    ['critical', /\bpassword\s*===?\s*/i, 'Insecure password check', 'Comparing passwords directly in plaintext is unsafe and vulnerable to timing attacks. Use bcrypt.compare() or crypto.timingSafeEqual().', 'security', 'Confirmed'],
+    ['warning', /\b(?:httpOnly|secure)\s*:\s*false\b/i, 'Insecure cookie configuration', 'Disabling httpOnly or secure flags exposes session cookies to XSS theft or network interception.', 'security', 'Confirmed'],
+    ['warning', /\b(?:id|token|key|secret|session|transactionId)\s*[:=]\s*Math\.random\s*\(/i, 'Insecure randomness (Math.random)', 'Math.random() is not cryptographically secure and can cause ID collisions. Use crypto.randomUUID() or crypto.randomBytes().', 'security', 'Confirmed'],
+    ['warning', /(?<![=!<>])==(?!=)/, 'Loose equality (==)', 'Using == allows JavaScript type coercion bugs. Use strict equality (===) instead.', 'logic', 'Confirmed'],
+    ['warning', /\.innerHTML\s*\+?=(?!\s*(""|''|``)\s*;?\s*$)/, 'XSS risk (innerHTML)', 'Putting text into innerHTML can run injected scripts. Use textContent instead.', 'security', 'Confirmed'],
+    ['warning', /\bdocument\.write\s*\(/, 'document.write used', 'document.write can inject scripts. Build elements with the DOM instead.', 'security', 'Confirmed'],
   ],
   Java: [
-    ['critical', /Runtime\.getRuntime\(\)\.exec\s*\(/, 'Command execution', 'Running OS commands is risky if any part comes from input. Validate strictly or avoid it.'],
-    ['critical', /(executeQuery|executeUpdate|prepareStatement)\s*\(\s*"[^"]*"\s*\+/, 'SQL injection risk', 'The SQL text is joined with variables. Use PreparedStatement with ? placeholders.'],
-    ['warning', /MessageDigest\.getInstance\s*\(\s*"(MD5|SHA-?1)"/i, 'Weak hash', 'MD5 and SHA-1 are broken for security use. Use SHA-256 or stronger.'],
+    ['critical', /Runtime\.getRuntime\(\)\.exec\s*\(/, 'Command execution', 'Running OS commands is risky if any part comes from input. Validate strictly or avoid it.', 'security', 'Confirmed'],
+    ['critical', /(executeQuery|executeUpdate|prepareStatement)\s*\(\s*"[^"]*"\s*\+/, 'SQL injection risk', 'The SQL text is joined with variables. Use PreparedStatement with ? placeholders.', 'security', 'Confirmed'],
+    ['warning', /MessageDigest\.getInstance\s*\(\s*"(MD5|SHA-?1)"/i, 'Weak hash', 'MD5 and SHA-1 are broken for security use. Use SHA-256 or stronger.', 'security', 'Confirmed'],
   ],
   'C++': [
-    ['critical', /\bgets\s*\(/, 'gets() is unsafe', 'gets() cannot limit input size and causes buffer overflows. Use fgets().'],
-    ['critical', /\bscanf\s*\(\s*"%s"/, 'Unbounded scanf', 'scanf("%s") has no size limit. Use a width like %49s or fgets().'],
-    ['critical', /\bsystem\s*\(/, 'system() call', 'system() runs a shell command and is dangerous with any outside input.'],
-    ['warning', /\b(strcpy|strcat|sprintf)\s*\(/, 'Unsafe string function', 'These do not check the buffer size. Use strncpy, strncat or snprintf.'],
+    ['critical', /\bgets\s*\(/, 'gets() is unsafe', 'gets() cannot limit input size and causes buffer overflows. Use fgets().', 'security', 'Confirmed'],
+    ['critical', /\bscanf\s*\(\s*"%s"/, 'Unbounded scanf', 'scanf("%s") has no size limit. Use a width like %49s or fgets().', 'security', 'Confirmed'],
+    ['critical', /\bsystem\s*\(/, 'system() call', 'system() runs a shell command and is dangerous with any outside input.', 'security', 'Confirmed'],
+    ['warning', /\b(strcpy|strcat|sprintf)\s*\(/, 'Unsafe string function', 'These do not check the buffer size. Use strncpy, strncat or snprintf.', 'security', 'Confirmed'],
   ],
   Go: [
-    ['critical', /\.(Query|Exec)\s*\(\s*"[^"]*"\s*\+/, 'SQL injection risk', 'The SQL text is joined with variables. Use placeholders ($1 or ?).'],
-    ['critical', /InsecureSkipVerify\s*:\s*true/, 'TLS verification disabled', 'InsecureSkipVerify turns off certificate checks. Remove it.'],
-    ['warning', /exec\.Command\(\s*"(sh|bash)"/, 'Shell command', 'Running a shell with built text can allow injection. Call the program directly with arguments.'],
+    ['critical', /\.(Query|Exec)\s*\(\s*"[^"]*"\s*\+/, 'SQL injection risk', 'The SQL text is joined with variables. Use placeholders ($1 or ?).', 'security', 'Confirmed'],
+    ['critical', /InsecureSkipVerify\s*:\s*true/, 'TLS verification disabled', 'InsecureSkipVerify turns off certificate checks. Remove it.', 'security', 'Confirmed'],
+    ['warning', /exec\.Command\(\s*"(sh|bash)"/, 'Shell command', 'Running a shell with built text can allow injection. Call the program directly with arguments.', 'security', 'Confirmed'],
   ],
   SQL: [
-    ['warning', /\bGRANT\s+ALL\b/i, 'Over-broad GRANT', 'GRANT ALL gives every permission. Give only what is needed.'],
-    ['warning', /\bDROP\s+(TABLE|DATABASE)\b/i, 'DROP statement', 'DROP permanently deletes data. Make sure this is intended and backed up.'],
+    ['warning', /\bGRANT\s+ALL\b/i, 'Over-broad GRANT', 'GRANT ALL gives every permission. Give only what is needed.', 'security', 'Confirmed'],
+    ['warning', /\bDROP\s+(TABLE|DATABASE)\b/i, 'DROP statement', 'DROP permanently deletes data. Make sure this is intended and backed up.', 'logic', 'Potential'],
   ],
   'HTML/CSS': [
-    ['warning', /<script[^>]+src\s*=\s*["']http:\/\//i, 'Insecure script source', 'The script loads over http, which can be tampered with. Use https.'],
-    ['warning', /target\s*=\s*["']_blank["'](?![^>]*noopener)/i, 'Missing rel="noopener"', 'Links that open a new tab should have rel="noopener noreferrer".'],
+    ['warning', /<script[^>]+src\s*=\s*["']http:\/\//i, 'Insecure script source', 'The script loads over http, which can be tampered with. Use https.', 'security', 'Confirmed'],
+    ['warning', /target\s*=\s*["']_blank["'](?![^>]*noopener)/i, 'Missing rel="noopener"', 'Links that open a new tab should have rel="noopener noreferrer".', 'security', 'Confirmed'],
+  ],
+  Dependencies: [
+    ['critical', /"[^"]+"\s*:\s*"(\*|latest)"/i, 'Unpinned wildcard dependency', 'Using "*" or "latest" allows supply-chain attacks and breaking updates. Pin to a specific version.', 'security', 'Confirmed'],
+    ['critical', /"(lodash|minimist|serialize-javascript)"\s*:\s*"[\^~]?[0-3]\./i, 'Known vulnerable package version', 'Older versions of this package have known prototype pollution / RCE CVEs. Upgrade to the latest patched release.', 'security', 'Confirmed'],
+    ['warning', /"(express|axios|jsonwebtoken)"\s*:\s*"[\^~]?0\./i, 'Outdated pre-1.0 dependency', 'Pre-1.0 versions often contain unpatched security advisories. Upgrade to a maintained version.', 'security', 'Potential'],
   ],
 };
 SEC.TypeScript = SEC.JavaScript;
@@ -211,94 +247,50 @@ function securityScan(code, language) {
   const rules = SEC[language] || [];
   lines.forEach((line, i) => {
     if (isCommentLine(line, language)) return;
-    for (const [sev, re, title, msg] of rules) {
-      if (re.test(line)) out.push({ line: i + 1, severity: sev, tier: 3, title, explanation: msg });
+    for (const [sev, re, title, msg, cat, conf] of rules) {
+      if (re.test(line)) out.push({ line: i + 1, severity: sev, tier: 3, title, explanation: msg, category: cat || 'security', confidence: conf || 'Confirmed' });
     }
   });
-  if (language === 'SQL') {  // DELETE / UPDATE with no WHERE
+  if (language === 'SQL') {
     for (let i = 0; i < lines.length; i++) {
       if (isCommentLine(lines[i], 'SQL')) continue;
       if (/^\s*(DELETE\s+FROM|UPDATE)\b/i.test(lines[i])) {
         let stmt = '';
         for (let j = i; j < lines.length; j++) { stmt += ' ' + lines[j]; if (lines[j].includes(';')) break; }
-        if (!/\bWHERE\b/i.test(stmt)) out.push({ line: i + 1, severity: 'critical', tier: 3, title: 'No WHERE clause', explanation: 'This DELETE/UPDATE has no WHERE, so it changes every row in the table.' });
+        if (!/\bWHERE\b/i.test(stmt)) out.push({ line: i + 1, severity: 'critical', tier: 3, title: 'No WHERE clause', explanation: 'This DELETE/UPDATE has no WHERE, so it changes every row in the table.', category: 'logic', confidence: 'Confirmed' });
       }
     }
   }
   return out;
 }
 
+function categoryOfRule(rule) {
+  if (['secret', 'unsafe-eval', 'unsafe-os-system', 'sql-injection'].includes(rule)) return 'security';
+  if (['long-function'].includes(rule)) return 'performance';
+  if (['syntax', 'undefined-name', 'unbound-local', 'zero-division', 'self-append', 'unhashable-key'].includes(rule)) return 'logic';
+  return 'quality';
+}
+
+function computeCategoryScores(issues) {
+  const s = { security: 100, logic: 100, quality: 100, performance: 100 };
+  for (const i of issues) {
+    const cat = i.category || 'quality';
+    const pen = i.severity === 'critical' ? 20 : i.severity === 'warning' ? 10 : 5;
+    if (s[cat] !== undefined) s[cat] = Math.max(0, s[cat] - pen);
+  }
+  return s;
+}
+
 function audit(code, language, depth) {
   language = !language || language === 'Auto' ? detectLanguage(code) : fixLanguage(code, language);
   const filename = FILE_FOR[language] || 'a.txt';
-  const r = a.analyzePullFiles([{ filename, patch: a.fullFilePatch(code), content: code }]);
+  const r = language === 'Dependencies' ? { findings: [], score: 100 } : a.analyzePullFiles([{ filename, patch: a.fullFilePatch(code), content: code }]);
   let findings = r.findings || [];
   const issues = findings.map((f) => ({
     line: f.line, severity: severityOf(f.rule), tier: TIER[f.rule] || 5,
     title: titleOf(f.rule), explanation: stripMd(f.message),
+    category: categoryOfRule(f.rule), confidence: 'Confirmed',
   }));
   const takenEval = new Set(issues.filter((x) => x.title === 'Unsafe eval').map((x) => x.line));
   const takenSql = new Set(issues.filter((x) => /sql injection/i.test(x.title)).map((x) => x.line));
-  for (const x of securityScan(code, language)) {
-    if (x.title === 'Unsafe eval' && takenEval.has(x.line)) continue;
-    if (/sql injection/i.test(x.title) && takenSql.has(x.line)) continue;
-    issues.push(x);
-  }
-  let shown = issues;
-  if (depth === 'basic') shown = issues.filter((x) => x.severity === 'critical');
-  shown.sort((p, q) => p.line - q.line);
-  const base = depth === 'basic' ? a.scoreOf(findings.filter((f) => severityOf(f.rule) === 'critical')) : r.score;
-  const extraPen = shown.filter((x) => !findings.some((f) => f.line === x.line && titleOf(f.rule) === x.title))
-    .reduce((n, x) => n + (x.severity === 'critical' ? 15 : 6), 0);
-  const score = Math.max(0, base - extraPen);
-  const fix = autoFix(code, language, findings);
-  const sev = shown.length ? `${shown.length} issue${shown.length > 1 ? 's' : ''} found.` : 'No issues found. Code looks clean.';
-  const note = FILE_FOR[language] && ['Python', 'JavaScript', 'TypeScript', 'Java', 'C++'].includes(language) ? '' : ' (security rules only for this language)';
-  return { language, score, summary: `Detected: ${language}. ${sev}${note}`, issues: shown, fixedCode: fix.fixedCode, changelog: fix.changelog };
-}
-
-function newToken(email) {
-  const t = crypto.randomBytes(24).toString('hex');
-  tokens.set(t, { email, exp: Date.now() + 12 * HOUR });
-  return t;
-}
-function authed(req) {
-  const h = req.headers.authorization || '';
-  const s = tokens.get(h.startsWith('Bearer ') ? h.slice(7) : '');
-  return s && s.exp > Date.now() ? s : null;
-}
-
-// returns true if it handled the request
-async function handle(req, res, url, readBody, send) {
-  if (req.method !== 'POST' || !url.startsWith('/api/')) return false;
-  const body = async () => { try { return JSON.parse((await readBody(req, 1000000)).toString() || '{}'); } catch (e) { return {}; } };
-
-  if (url === '/api/auth/guest') { send(res, 200, { token: newToken('guest') }); return true; }
-  if (url === '/api/auth/request') {
-    const { email } = await body();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email || '')) { send(res, 400, { error: 'Enter a valid email address.' }); return true; }
-    const code = String(crypto.randomInt(100000, 1000000));
-    codes.set(email.toLowerCase(), { code, exp: Date.now() + 5 * 60 * 1000 });
-    send(res, 200, { demoCode: code });
-    return true;
-  }
-  if (url === '/api/auth/verify') {
-    const { email, code } = await body();
-    const key = String(email || '').toLowerCase();
-    const c = codes.get(key);
-    if (!c || c.exp < Date.now() || c.code !== String(code || '')) { send(res, 400, { error: 'Wrong or expired code.' }); return true; }
-    codes.delete(key);
-    send(res, 200, { token: newToken(email) });
-    return true;
-  }
-  if (url === '/api/audit') {
-    if (!authed(req)) { send(res, 401, { error: 'Please sign in again.' }); return true; }
-    const { code, language, depth } = await body();
-    if (!code || !String(code).trim()) { send(res, 400, { error: 'Paste some code first.' }); return true; }
-    send(res, 200, audit(String(code), language || 'Python', depth || 'standard'));
-    return true;
-  }
-  return false;
-}
-
-module.exports = { handle, audit };
+  for (const x of securityScan(code, languag
