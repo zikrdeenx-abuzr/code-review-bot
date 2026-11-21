@@ -141,6 +141,7 @@ nav{display:flex;justify-content:space-between;align-items:center;padding:14px 2
     <button class="btn ghost" id="upload">Upload file</button><input id="file" type="file" hidden>
     <div class="sp"></div>
     <button class="btn" id="run">Run Audit</button>
+    <button class="btn ghost" id="logout">Logout</button>
   </div>
   <div class="work">
     <div class="pane" id="edPane">
@@ -232,4 +233,157 @@ function owaspTag(title) {
   if (t.includes('weak hash')) return 'OWASP A02 · CWE-327';
   if (t.includes('xss') || t.includes('document.write')) return 'OWASP A03 · CWE-79';
   if (t.includes('privilege')) return 'OWASP A01 · CWE-269';
-  if (t.includes('mass assignment')) return 'OWASP A
+  if (t.includes('mass assignment')) return 'OWASP A01 · CWE-915';
+  if (t.includes('path traversal')) return 'OWASP A01 · CWE-22';
+  if (t.includes('ssrf')) return 'OWASP A10 · CWE-918';
+  if (t.includes('business logic')) return 'OWASP A04 · CWE-840';
+  if (t.includes('cookie')) return 'OWASP A05 · CWE-614';
+  if (t.includes('dependency') || t.includes('vulnerable package')) return 'OWASP A06 · CWE-1104';
+  if (t.includes('sensitive data')) return 'OWASP A02 · CWE-200';
+  if (t.includes('password')) return 'OWASP A07 · CWE-208';
+  if (t.includes('random')) return 'OWASP A02 · CWE-338';
+  if (t.includes('debug')) return 'OWASP A05 · CWE-489';
+  if (t.includes('zero division')) return 'CWE-369';
+  return '';
+}
+
+function scoreColor(n) { return n >= 80 ? 'var(--em)' : n >= 50 ? 'var(--am)' : 'var(--cr)'; }
+
+function jumpToLine(lineNum) {
+  const ta = $('code');
+  const lines = ta.value.split('\n');
+  const idx = Math.max(0, Math.min(lines.length - 1, lineNum - 1));
+  let start = 0;
+  for (let i = 0; i < idx; i++) start += lines[i].length + 1;
+  const end = start + (lines[idx] ? lines[idx].length : 0);
+  if (window.innerWidth <= 820) $('edPane').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  ta.focus();
+  ta.setSelectionRange(start, end);
+  ta.scrollTop = Math.max(0, idx * 20.15 - ta.clientHeight / 3);
+  syncScroll();
+}
+
+function diffLines(a, b) {
+  const x = a.split('\n'), y = b.split('\n'), n = x.length, m = y.length;
+  const t = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) t[i][j] = x[i] === y[j] ? t[i + 1][j + 1] + 1 : Math.max(t[i + 1][j], t[i][j + 1]);
+  const out = []; let i = 0, j = 0;
+  while (i < n && j < m) {
+    if (x[i] === y[j]) { out.push(['e', x[i]]); i++; j++; }
+    else if (t[i + 1][j] >= t[i][j + 1]) out.push(['d', x[i++]]);
+    else out.push(['a', y[j++]]);
+  }
+  while (i < n) out.push(['d', x[i++]]);
+  while (j < m) out.push(['a', y[j++]]);
+  return out;
+}
+
+function downloadReport() {
+  if (!result) return;
+  const sc = result.scores || { security: result.score, logic: result.score, quality: result.score, performance: result.score };
+  const lines = [
+    'CodePulse LPU - Security & Quality Audit Report',
+    '===============================================',
+    'Language: ' + result.language,
+    'Overall Health Score: ' + result.score + '/100',
+    `Breakdown: Security ${sc.security} | Logic ${sc.logic} | Quality ${sc.quality} | Performance ${sc.performance}`,
+    'Summary: ' + result.summary,
+    '',
+    'Issues Found:',
+    ...(result.issues.length ? result.issues.map((i) => {
+      const tag = owaspTag(i.title);
+      return `${i.id || '-'} [${i.severity.toUpperCase()} | ${i.confidence || 'Confirmed'}] Line ${i.line}${tag ? ' [' + tag + ']' : ''} - ${i.title}\n   ${i.explanation}`;
+    }) : ['None. Code looks clean.'])
+  ];
+  const blob = new Blob([lines.join('\n')], { type: 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'codepulse-lpu-report.txt';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function render() {
+  document.querySelectorAll('#tabs button').forEach((b) => b.classList.toggle('on', b.dataset.t === tab));
+  const o = $('outp');
+  if (!result) return;
+  if (tab === 'report') {
+    const col = scoreColor(result.score);
+    const sc = result.scores || { security: result.score, logic: result.score, quality: result.score, performance: result.score };
+    const order = { critical: 0, warning: 1, optimization: 2, style: 3 };
+    const allItems = [...result.issues].sort((p, q) => (order[p.severity] ?? 9) - (order[q.severity] ?? 9) || p.line - q.line);
+    const counts = { all: allItems.length, critical: 0, warning: 0, optimization: 0, style: 0 };
+    allItems.forEach((x) => { if (counts[x.severity] !== undefined) counts[x.severity]++; });
+    const items = sevFilter === 'all' ? allItems : allItems.filter((x) => x.severity === sevFilter);
+    const banner = impactMsg ? `<div class="impact${impactWarn ? ' warn' : ''}">${esc(impactMsg)}</div>` : '';
+    const axesHtml = `<div class="axes">${[['Security', sc.security], ['Logic', sc.logic], ['Quality', sc.quality], ['Performance', sc.performance]].map(([k, v]) => `<div class="ax"><div class="ax-t"><span>${k}</span><span style="color:${scoreColor(v)}">${v}</span></div><div class="ax-b"><i style="width:${v}%;background:${scoreColor(v)}"></i></div></div>`).join('')}</div>`;
+    const filtHtml = allItems.length ? `<div class="filts">${['all', 'critical', 'warning', 'optimization', 'style'].filter((k) => k === 'all' || counts[k] > 0).map((k) => `<button data-f="${k}" class="${sevFilter === k ? 'on' : ''}">${k[0].toUpperCase() + k.slice(1)} (${counts[k]})</button>`).join('')}</div>` : '';
+
+    o.innerHTML = banner + `<div class="score"><div class="score-l"><div class="ring" style="background:conic-gradient(${col} ${result.score * 3.6}deg,#E2E8F0 0)"><span>${result.score}</span></div><div><b>Health score</b><div style="color:var(--mu)">${esc(result.summary)}</div></div></div><button class="btn ghost" id="dlRep">Download Report</button></div>` + axesHtml + filtHtml +
+      (items.length ? items.map((i) => {
+        const tag = owaspTag(i.title);
+        const conf = i.confidence || 'Confirmed';
+        return `<div class="iss ${esc(i.severity)}" data-line="${esc(i.line)}"><div class="iss-top">${i.id ? `<span class="fid">${esc(i.id)}</span>` : ''}<span class="badge">${esc(i.severity)}</span><span class="mono" style="color:var(--mu)">Line ${esc(i.line)}</span>${tag ? `<span class="owasp">${esc(tag)}</span>` : ''}<span class="conf${conf === 'Potential' ? ' pot' : ''}">${esc(conf)}</span><span class="jump">Jump ↗</span></div><b>${esc(i.title)}</b><p>${esc(i.explanation)}</p></div>`;
+      }).join('') : '<div class="empty" style="margin-top:6vh">No issues in this filter.</div>');
+    $('dlRep').onclick = downloadReport;
+    o.querySelectorAll('.filts button').forEach((b) => b.onclick = () => { sevFilter = b.dataset.f; render(); });
+    o.querySelectorAll('.iss').forEach((el) => el.onclick = () => jumpToLine(Number(el.dataset.line)));
+  } else if (tab === 'diff') {
+    const d = diffLines($('code').value, result.fixedCode);
+    o.innerHTML = '<div class="acts"><button class="btn ok" id="applyFix">Apply Fix to Editor</button><button class="btn ghost" id="copy">Copy Repaired Code</button></div><div class="diff">' + d.map(([k, l]) => `<div class="${k}">${k === 'a' ? '+ ' : k === 'd' ? '- ' : '  '}${esc(l)}</div>`).join('') + '</div>';
+    $('applyFix').onclick = () => {
+      prevScore = result.score;
+      $('code').value = result.fixedCode;
+      syncEditor();
+      $('applyFix').textContent = 'Applying & Verifying...';
+      runAudit(true);
+    };
+    $('copy').onclick = async () => { await navigator.clipboard.writeText(result.fixedCode); $('copy').textContent = 'Copied!'; setTimeout(() => { $('copy').textContent = 'Copy Repaired Code'; }, 1200); };
+  } else {
+    o.innerHTML = result.changelog.length ? '<ul class="log">' + result.changelog.map((c) => `<li>${esc(c.change)}<span>${esc(c.reason)}</span></li>`).join('') + '</ul>' : '<div class="empty" style="margin-top:6vh">No changes were needed.</div>';
+  }
+}
+document.querySelectorAll('#tabs button').forEach((b) => b.onclick = () => { tab = b.dataset.t; render(); });
+
+async function runAudit(fromFix = false) {
+  const code = $('code').value;
+  const sel = $('lang').value;
+  if (!fromFix) { prevScore = null; impactMsg = ''; impactWarn = false; }
+  sevFilter = 'all';
+  $('run').disabled = true;
+  $('outp').innerHTML = '<div class="empty">Auditing...</div>';
+  try {
+    result = await api('/api/audit', { code, language: sel === 'auto' ? 'Auto' : sel, depth });
+    if (fromFix && prevScore !== null) {
+      const diff = result.score - prevScore;
+      if (diff > 0) {
+        impactWarn = false;
+        impactMsg = `Fixed & Verified: Health Score improved ${prevScore} → ${result.score} (+${diff} pts)`;
+      } else {
+        impactWarn = true;
+        impactMsg = `Fix Applied — Manual Review Needed: Remaining issues require business-logic fixes.`;
+      }
+    }
+    tab = 'report';
+    render();
+  } catch (e) {
+    result = null;
+    if (e.status === 401) { token = null; sessionStorage.removeItem('cp_token'); show('auth'); $('authErr').textContent = e.message; }
+    else $('outp').innerHTML = `<div class="err">${esc(e.message)}</div>`;
+  } finally {
+    $('run').disabled = false;
+  }
+}
+$('run').onclick = () => runAudit(false);
+$('logout').onclick = () => {
+  token = null;
+  sessionStorage.removeItem('cp_token');
+  result = null;
+  $('code').value = '';
+  syncEditor();
+  $('outp').innerHTML = '<div class="empty">Run an audit to see results.</div>';
+  show('landing');
+};
+</script>
+</body>
+</html>
