@@ -1,48 +1,38 @@
-# Code Review Bot (Code Fuzion 2026, problem M7)
 
-A GitHub App that comments on pull requests with **line-level feedback** for common beginner mistakes, plus a simple score. If the code is fine, it stays completely quiet.
-
-## What it detects
+## Newer rules: syntax and undefined names
 
 | Rule | Examples | Score penalty |
 |---|---|---|
-| Hard-coded secrets | AWS/GitHub/Stripe/Google/Slack tokens, private keys, `password = "..."`, passwords inside connection URLs | -20 |
-| Missing error handling | Python `open`, `requests.get`, `json.loads`, `int(input())`; JS `await fetch`, `JSON.parse`, `fs.*Sync`, `.then` without `.catch`; Java `parseInt`, file streams, `Scanner.nextInt`; C `fopen`/`malloc` without a NULL check, unchecked `scanf` | -6 |
-| Swallowed errors | empty `catch {}`, `except: pass`, bare `except:` | -6 |
-| Long functions | any function over 50 lines (Python, JS/TS, Java, C/C++) | -8 |
+| Syntax mistakes | missing `:` or `;`, `=` instead of `==`, `else if` instead of `elif`, Python 2 `print "hi"`, wrong indentation, a bracket or quote that is never closed | see `analyzer.js` |
+| Undefined names (Python) | a misspelled variable such as `mark` instead of `marks`, with a "did you mean ...?" hint | see `analyzer.js` |
 
-Score = 100 minus penalties (minimum 0).
+Because of these rules, even a very short piece of code no longer passes by default.
 
-## How it works
+## Suggested fixes
 
-1. GitHub sends a `pull_request` webhook (opened / synchronize / reopened / ready_for_review) to `POST /webhook`.
-2. The server checks the HMAC signature, then fetches the PR's changed files and the full text of code files.
-3. `analyzer.js` finds problems, but only reports lines **added** by the PR (it never nags about old code).
-4. Findings are posted as ONE review with a comment on each exact line. Each comment carries a hidden marker, so pushing again never repeats a comment.
-5. No findings, or nothing new: nothing is posted.
+For many findings the bot also builds the corrected line. On a pull request it is posted as a GitHub `suggestion` block, so the author can apply it with one click ("Commit suggestion"). The web page shows the same line under **Suggested fix**.
 
-No external dependencies: only Node.js built-ins (`http`, `crypto`, `fetch`).
+## Web page
 
-## Files
+Open the Render page, paste code, pick the language and press **Review code**.
 
-- `analyzer.js` - the rules (the part to explain in the viva)
-- `github.js` - webhook signature check, App JWT, GitHub API calls
-- `review.js` - the pull request flow
-- `server.js` - web server (`/webhook`, `/analyze`, `/health`, demo page)
-- `index.html` - paste-code demo page
-- `test.js` - `npm test`
+- **Copy** copies everything in the box.
+- **X** clears the whole box in one tap.
+- Both buttons hide when the box is empty.
 
-## Setup
+## Tests
 
-Environment variables: `APP_ID`, `PRIVATE_KEY` (the App's .pem text), `WEBHOOK_SECRET`.
-Start: `npm start`. Test: `npm test`.
+`run-tests.js` checks the analyzer on 46 small samples: 24 with a known mistake and 22 correct ones.
 
-## Honest limits
+| Measure | Result |
+|---|---|
+| Mistakes caught on the right line | 24/24 |
+| Correct code left alone (no false alarm) | 22/22 |
 
-- Checks are pattern-based (regex plus brace/indent tracking), not a full parser. Rare syntax, such as a regex literal containing quotes, can confuse it.
-- Error-handling rules cover a fixed list of risky calls, not every possible one.
-- A call inside `try` is treated as handled, even if the `catch` is weak.
+Run it yourself:
 
-## AI use declaration
+```
+node run-tests.js
+```
 
-(To be filled in before submission: which AI tools were used and for which parts.)
+The full table is in `TEST_REPORT.md`.
