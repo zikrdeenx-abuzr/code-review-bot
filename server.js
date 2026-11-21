@@ -7,6 +7,7 @@ const path = require('path');
 const gh = require('./github');
 const { analyzeFile, fullFilePatch, scoreOf } = require('./analyzer');
 const { reviewPullRequest } = require('./review');
+const codepulse = require('./codepulse-api');
 
 const PR_ACTIONS = new Set(['opened', 'synchronize', 'reopened', 'ready_for_review']);
 
@@ -35,9 +36,19 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === 'GET' && url === '/health') return send(res, 200, { ok: true });
 
+    // new CodePulse AI web app (falls back to the old page if codepulse.html is missing)
     if (req.method === 'GET' && url === '/') {
+      const f = fs.existsSync(path.join(__dirname, 'codepulse.html')) ? 'codepulse.html' : 'index.html';
+      return send(res, 200, fs.readFileSync(path.join(__dirname, f), 'utf8'), 'text/html');
+    }
+
+    // the old simple paste page is still available here
+    if (req.method === 'GET' && url === '/classic') {
       return send(res, 200, fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8'), 'text/html');
     }
+
+    // login + audit API for the CodePulse AI web app
+    if (await codepulse.handle(req, res, url, readBody, send)) return;
 
     // paste code in the demo page -> findings (same analyzer the bot uses)
     if (req.method === 'POST' && url === '/analyze') {
